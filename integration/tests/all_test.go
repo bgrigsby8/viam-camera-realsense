@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/edaniels/golog"
 	"go.viam.com/rdk/components/camera"
 	"go.viam.com/rdk/config"
+	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/robot"
 	robotimpl "go.viam.com/rdk/robot/impl"
+	"go.viam.com/rdk/utils"
 	"go.viam.com/test"
 )
 
@@ -31,15 +32,7 @@ func TestCameraServer(t *testing.T) {
 		test.That(t, err, test.ShouldBeNil)
 	})
 	t.Run("get image method", func(t *testing.T) {
-		stream, err := cam.Stream(context.Background())
-		test.That(t, err, test.ShouldBeNil)
-		_, _, err = stream.Next(context.Background())
-		test.That(t, err, test.ShouldBeNil)
-	})
-	t.Run("get image method", func(t *testing.T) {
-		stream, err := cam.Stream(context.Background())
-		test.That(t, err, test.ShouldBeNil)
-		_, _, err = stream.Next(context.Background())
+		_, _, err := cam.Image(context.Background(), utils.MimeTypePNG, nil)
 		test.That(t, err, test.ShouldBeNil)
 	})
 	t.Run("get point cloud method", func(t *testing.T) {
@@ -54,7 +47,7 @@ func TestCameraServer(t *testing.T) {
 }
 
 func setupViamServer(ctx context.Context, t *testing.T) robot.Robot {
-	logger := golog.NewTestLogger(t)
+	logger := logging.NewLogger("realsense-integration-tests")
 	moduleString := strings.TrimSpace(*modulePath)
 	logger.Info("testing module at %v", moduleString)
 	configString := fmt.Sprintf("{"+
@@ -88,9 +81,9 @@ func setupViamServer(ctx context.Context, t *testing.T) robot.Robot {
 		"    }"+
 		"  ]"+
 		"}", moduleString)
-	cfg, err := config.FromReader(ctx, "default.json", bytes.NewReader([]byte(configString)), logger)
+	cfg, err := config.FromReader(ctx, "default.json", bytes.NewReader([]byte(configString)), logger, nil)
 	test.That(t, err, test.ShouldBeNil)
-	r, err := robotimpl.RobotFromConfig(ctx, cfg, logger)
+	r, err := robotimpl.RobotFromConfig(ctx, cfg, nil, logger, nil)
 	test.That(t, err, test.ShouldBeNil)
 	return r
 }
