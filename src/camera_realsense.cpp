@@ -3,6 +3,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <iosfwd>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -19,8 +21,165 @@
 
 #include "encoding.hpp"
 
+struct tm;
+
 namespace viam {
 namespace realsense {
+// Build a stringstream and automatically convert to string, all in one line.
+//
+struct from {
+    std::ostringstream _ss;
+
+    from() = default;
+
+    template <class T>
+    explicit from(const T &val) {
+        _ss << val;
+    }
+
+    // Specialty conversion: like std::to_string; fixed, high-precision (6)
+    // Trims ending 0s and reverts to non-fixed notation if '0.' is the result...
+    explicit from(double val, int precision = 6);
+
+    template <class T>
+    from &operator<<(const T &val) {
+        _ss << val;
+        return *this;
+    }
+
+    std::string str() const { return _ss.str(); }
+    operator std::string() const { return _ss.str(); }
+
+    // Returns an empty string if 'time' is null or the format requires too many
+    // characters. See strftime for format specifiers.
+    static std::string datetime(tm const *time, char const *format = "%Y-%m-%d-%H_%M_%S");
+    static std::string datetime(char const *format = "%Y-%m-%d-%H_%M_%S");
+};
+
+inline std::ostream &operator<<(std::ostream &os, from const &f) {
+    // TODO c++20: use .rdbuf()->view()
+    return os << f.str();
+}
+
+// Software versions have four numeric components making up a "version string":
+//     "MAJOR.MINOR.PATCH[.BUILD]"
+// Note that the BUILD is optional...
+//
+struct version {
+    typedef uint16_t sub_type;
+    typedef uint64_t number_type;
+
+    number_type number;
+
+    constexpr version() : number(0) {}
+
+    explicit version(number_type n) : number(n) {}
+
+    version(sub_type major, sub_type minor, sub_type patch, sub_type build);
+
+    explicit version(const char *);
+    explicit version(const std::string &str) : version(str.c_str()) {}
+
+    bool is_valid() const { return (number != 0); }
+    operator bool() const { return is_valid(); }
+
+    void clear() { number = 0; }
+
+    sub_type get_major() const { return sub_type(number >> (8 * 6)); }
+    sub_type get_minor() const { return sub_type(number >> (8 * 4)); }
+    sub_type get_patch() const { return sub_type(number >> (8 * 2)); }
+    sub_type get_build() const { return sub_type(number); }
+
+    version without_build() const { return version(number & ~0xFFFFULL); }
+
+    bool operator<=(version const &other) const { return number <= other.number; }
+    bool operator==(version const &other) const { return number == other.number; }
+    bool operator>(version const &other) const { return number > other.number; }
+    bool operator!=(version const &other) const { return number != other.number; }
+    bool operator>=(version const &other) const { return number >= other.number; }
+    bool operator<(version const &other) const { return number < other.number; }
+    bool is_between(version const &from, version const &until) const {
+        return (from <= *this) && (*this <= until);
+    }
+
+    std::string to_string() const;
+    operator std::string() const { return to_string(); }
+};
+
+std::ostream &operator<<(std::ostream &, version const &);
+
+version::version(sub_type m, sub_type n, sub_type p, sub_type b)
+    : version((uint64_t(m) << (8 * 6)) + (uint64_t(n) << (8 * 4)) + (uint64_t(p) << (8 * 2)) + b) {
+    // Invalidate if any overflow
+    if (m != get_major())
+        number = 0;
+    else if (n != get_minor())
+        number = 0;
+    else if (p != get_patch())
+        number = 0;
+    else if (b != get_build())
+        number = 0;
+}
+
+version::version(char const *base) : version() {
+    if (!base) return;
+    unsigned major = 0;
+    char const *ptr = base;
+    while (*ptr != '.') {
+        if (*ptr < '0' || *ptr > '9') return;  // If 0, unexpected; otherwise invalid
+        major *= 10;
+        major += *ptr - '0';
+        if (major > 0xFFFF) return;  // Overflow
+        ++ptr;
+    }
+    if (ptr == base) return;  // No major
+
+    unsigned minor = 0;
+    base = ++ptr;
+    while (*ptr != '.') {
+        if (*ptr < '0' || *ptr > '9') return;  // If 0, unexpected; otherwise invalid
+        minor *= 10;
+        minor += *ptr - '0';
+        if (minor > 0xFFFF) return;  // Overflow
+        ++ptr;
+    }
+    if (ptr == base) return;  // No minor
+
+    unsigned patch = 0;
+    base = ++ptr;
+    while (*ptr != '.') {
+        if (!*ptr) break;                      // Acceptable: no build
+        if (*ptr < '0' || *ptr > '9') return;  // Invalid
+        patch *= 10;
+        patch += *ptr - '0';
+        if (patch > 0xFFFF) return;  // Overflow
+        ++ptr;
+    }
+    if (ptr == base) return;  // No patch
+
+    unsigned build = 0;
+    if (*ptr) {
+        base = ++ptr;
+        while (*ptr) {
+            if (*ptr < '0' || *ptr > '9') return;  // Invalid
+            build *= 10;
+            build += *ptr - '0';
+            if (build > 0xFFFF) return;  // Overflow
+            ++ptr;
+        }
+        if (ptr == base) return;  // No build, but there was a period at the end...!?
+    }
+
+    number = version(major, minor, patch, build).number;
+}
+
+std::string version::to_string() const { return from() << *this; }
+
+std::ostream &operator<<(std::ostream &os, version const &v) {
+    os << v.get_major() << '.' << v.get_minor() << '.' << v.get_patch();
+    if (v.get_build()) os << '.' << v.get_build();
+    return os;
+}
 
 // Global lock to serialize access to module thread state. It protects:
 // 1. RealSense context
@@ -42,8 +201,8 @@ static std::map<std::string, std::weak_ptr<DeviceProperties>> registered_devices
 
 // Global flag to signal that the module is shutting down to prevent callback
 // invocation during cleanup
-// NOTE: Nick S: This is an imcomplete solution. We don't confirm that we terminate all threads
-// before shutting down. We should add that.
+// NOTE: Nick S: This is an imcomplete solution. We don't confirm that we
+// terminate all threads before shutting down. We should add that.
 static std::atomic<bool> module_shutting_down{false};
 
 // Helper function to deregister device from global map
@@ -186,7 +345,7 @@ RealSenseProperties CameraRealSense::initialize(sdk::ResourceConfig cfg) {
 
 CameraRealSense::CameraRealSense(sdk::Dependencies deps, sdk::ResourceConfig cfg)
     : Camera(cfg.name()) {
-    VIAM_SDK_LOG(debug) << "[constructor] start";
+    VIAM_SDK_LOG(info) << "[constructor] start";
     RealSenseProperties props;
     auto start = std::chrono::high_resolution_clock::now();
     try {
@@ -198,11 +357,11 @@ CameraRealSense::CameraRealSense(sdk::Dependencies deps, sdk::ResourceConfig cfg
     } catch (const std::exception &e) {
         throw std::runtime_error("failed to initialize realsense: " + std::string(e.what()));
     }
-    VIAM_SDK_LOG(debug) << "[constructor] end";
+    VIAM_SDK_LOG(info) << "[constructor] end";
 }
 
 CameraRealSense::~CameraRealSense() {
-    VIAM_SDK_LOG(debug) << "[destructor] start. destroying realsense camera resource";
+    VIAM_SDK_LOG(info) << "[destructor] start. destroying realsense camera resource";
     // stop and wait for the frameLoop thread to exit
     if (!this->device_) return;
     {
@@ -220,7 +379,7 @@ CameraRealSense::~CameraRealSense() {
 
     std::lock_guard<std::mutex> lock(g_realsense_module_lock);
     deregister_device(this->device_->active_serial_number);
-    VIAM_SDK_LOG(debug) << "[destructor] end";
+    VIAM_SDK_LOG(info) << "[destructor] end";
 }
 
 void CameraRealSense::reconfigure(const sdk::Dependencies &deps, const sdk::ResourceConfig &cfg) {
@@ -579,6 +738,43 @@ float getDepthScale(rs2::device dev) {
     throw std::runtime_error("Device does not have a depth sensor");
 }
 
+std::string printDeviceInfo(rs2::device selected_device) {
+    VIAM_SDK_LOG(info) << "starting pipeline with selected device:";
+    std::string serial_from_rs2;
+    serial_from_rs2 = selected_device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+    auto usb_type = std::string(selected_device.get_info(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR));
+    auto firmware_version = selected_device.get_info(RS2_CAMERA_INFO_FIRMWARE_VERSION);
+    auto recommended_firmware_version =
+        selected_device.get_info(RS2_CAMERA_INFO_RECOMMENDED_FIRMWARE_VERSION);
+
+    VIAM_SDK_LOG(info) << "name:      " << selected_device.get_info(RS2_CAMERA_INFO_NAME);
+    VIAM_SDK_LOG(info) << "serial:    " << serial_from_rs2;
+
+    VIAM_SDK_LOG(info) << "firmware:  " << firmware_version;
+    VIAM_SDK_LOG(info) << "recommended firmware:  " << recommended_firmware_version;
+
+    if (version(firmware_version) < version(recommended_firmware_version)) {
+        VIAM_SDK_LOG(warn) << "firmware version is lower than recommended "
+                           << "version. Please upgrade camera's firmware or you "
+                           << "may experience camera stability issues.";
+    };
+    VIAM_SDK_LOG(info) << "port:      " << selected_device.get_info(RS2_CAMERA_INFO_PHYSICAL_PORT);
+
+    switch (usb_type.at(0)) {
+        case '3':
+            VIAM_SDK_LOG(info) << "usb type:  " << usb_type;
+            break;
+        default:
+            VIAM_SDK_LOG(warn) << "usb type:  " << usb_type
+                               << " please change the port and cable used with the camera to usb "
+                                  "3.x or you may experience freezing problems due "
+                                  "to usb bandwidth limitations: Look up intel realsense ticket "
+                                  "RSDSO-9074.";
+            break;
+    }
+    return serial_from_rs2;
+}
+
 std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
     std::shared_ptr<DeviceProperties> device_props, std::string target_serial_number) {
     rs2::device_list devices;
@@ -601,7 +797,8 @@ std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
         }
     }
     if (target_serial_number.empty()) {
-        VIAM_SDK_LOG(debug) << "no serial number specified in config, using first available device";
+        VIAM_SDK_LOG(debug) << "no serial number specified in config, using "
+                               "first available device";
         selected_device = devices.front();
     }
     if (!selected_device) {
@@ -609,16 +806,7 @@ std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
                                  target_serial_number);
     }
 
-    VIAM_SDK_LOG(info) << "starting pipeline with selected device:";
-    std::string serial_from_rs2;
-    serial_from_rs2 = selected_device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-    VIAM_SDK_LOG(info) << "name:      " << selected_device.get_info(RS2_CAMERA_INFO_NAME);
-    VIAM_SDK_LOG(info) << "serial:    " << serial_from_rs2;
-    VIAM_SDK_LOG(info) << "firmware:  "
-                       << selected_device.get_info(RS2_CAMERA_INFO_FIRMWARE_VERSION);
-    VIAM_SDK_LOG(info) << "port:      " << selected_device.get_info(RS2_CAMERA_INFO_PHYSICAL_PORT);
-    VIAM_SDK_LOG(info) << "usb type:  "
-                       << selected_device.get_info(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR);
+    auto serial_from_rs2 = printDeviceInfo(selected_device);
 
     float depthScaleMm = 0.0;
     bool disableDepth = device_props->disableDepth;
@@ -869,7 +1057,8 @@ std::vector<std::string> validate(sdk::ResourceConfig cfg) {
                 for (const auto &sensor_element : *sensors_list) {
                     if (!sensor_element.get<std::string>()) {
                         throw std::invalid_argument(
-                            "elements in 'sensors' list must be strings (e.g., \"color\", "
+                            "elements in 'sensors' list must be "
+                            "strings (e.g., \"color\", "
                             "\"depth\")");
                     }
                 }
