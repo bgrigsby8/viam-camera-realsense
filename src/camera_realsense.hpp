@@ -104,7 +104,7 @@ std::vector<std::string> validate(sdk::ResourceConfig cfg);
 int serve(int argc, char **argv);
 
 // Forward declaration
-// void global_device_changed_handler(rs2::event_information &info);
+void global_device_changed_handler(rs2::event_information &info);
 
 // The camera module class and its methods
 class CameraRealSense : public sdk::Camera, public sdk::Reconfigurable {
