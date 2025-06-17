@@ -1,5 +1,6 @@
 #include "src/camera_realsense.hpp"
 
+#include <memory>
 #include <viam/sdk/common/instance.hpp>
 
 int main(int argc, char **argv) {
@@ -13,6 +14,9 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  rs2::context rs2_ctx;
+
   viam::sdk::Instance instance;
-  return viam::realsense::serve(argc, argv);
+  return viam::realsense::serve(argc, argv,
+                                std::make_shared<rs2::context>(rs2_ctx));
 }

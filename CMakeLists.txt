@@ -9,6 +9,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Define an option for enabling build with AddressSanitizer
 option(ENABLE_SANITIZER "Enable AddressSanitizer" OFF)
+option(CMAKE_BUILD_TYPE RelWithDebInfo)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
