@@ -94,16 +94,14 @@ struct PipelineWithProperties {
 float getDepthScale(rs2::device dev);
 void frameLoop(std::promise<void> &ready, std::shared_ptr<DeviceProperties> deviceProps,
                float depthScaleMm, AtomicFrameSet &instance_latest_frames, bool debug_enabled);
-void on_device_reconnect(rs2::event_information &info, std::shared_ptr<DeviceProperties> device,
-                         std::shared_ptr<rs2::context> rs2_ctx);
+void on_device_reconnect(rs2::event_information &info, std::shared_ptr<DeviceProperties> device);
 
 std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
-    std::shared_ptr<DeviceProperties> device_props, std::string target_serial_number,
-    std::shared_ptr<rs2::context> rs2_ctx);
+    std::shared_ptr<DeviceProperties> device_props, std::string target_serial_number);
 
 // Module functions
 std::vector<std::string> validate(sdk::ResourceConfig cfg);
-int serve(int argc, char **argv, std::shared_ptr<rs2::context> rs2_ctx);
+int serve(int argc, char **argv);
 
 // Forward declaration
 // void global_device_changed_handler(rs2::event_information &info);
@@ -111,7 +109,6 @@ int serve(int argc, char **argv, std::shared_ptr<rs2::context> rs2_ctx);
 // The camera module class and its methods
 class CameraRealSense : public sdk::Camera, public sdk::Reconfigurable {
    private:
-    std::shared_ptr<rs2::context> rs2_ctx_;
     std::shared_ptr<DeviceProperties> device_;
     RealSenseProperties props_;
     AtomicFrameSet latest_frames_;
@@ -119,8 +116,7 @@ class CameraRealSense : public sdk::Camera, public sdk::Reconfigurable {
     RealSenseProperties initialize(sdk::ResourceConfig cfg);
 
    public:
-    explicit CameraRealSense(sdk::Dependencies deps, sdk::ResourceConfig cfg,
-                             std::shared_ptr<rs2::context> rs2_ctx);
+    explicit CameraRealSense(sdk::Dependencies deps, sdk::ResourceConfig cfg);
     ~CameraRealSense();
     void reconfigure(const sdk::Dependencies &deps, const sdk::ResourceConfig &cfg) override;
     sdk::Camera::raw_image get_image(std::string mime_type, const sdk::ProtoStruct &extra) override;

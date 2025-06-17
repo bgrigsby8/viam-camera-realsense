@@ -195,6 +195,7 @@ static std::mutex g_realsense_module_lock;
 // Global context for managing all RealSense devices and pipelines in the
 // module. It is shared across threads; we synchronize accesses when calling
 // context methods concurrently.
+static rs2::context rs2_ctx;
 // Global registry for devices and their properties/pipelines
 static std::map<std::string, std::weak_ptr<DeviceProperties>> registered_devices_;
 
@@ -321,7 +322,7 @@ RealSenseProperties CameraRealSense::initialize(sdk::ResourceConfig cfg) {
 
     // First start of Pipeline
     RealSenseProperties props;
-    auto [new_pipeline, new_props] = startPipeline(device_, serial_number_from_config, rs2_ctx_);
+    auto [new_pipeline, new_props] = startPipeline(device_, serial_number_from_config);
     {
         std::lock_guard<std::mutex> device_lock(device_->pipeline_mu);
         device_->pipeline = std::move(new_pipeline);
@@ -360,15 +361,13 @@ RealSenseProperties CameraRealSense::initialize(sdk::ResourceConfig cfg) {
     return props;
 }
 
-CameraRealSense::CameraRealSense(sdk::Dependencies deps, sdk::ResourceConfig cfg,
-                                 std::shared_ptr<rs2::context> rs2_ctx)
+CameraRealSense::CameraRealSense(sdk::Dependencies deps, sdk::ResourceConfig cfg)
     : Camera(cfg.name()) {
     if (module_level_debug.load()) {
         VIAM_SDK_LOG(info) << "[constructor] start";
     }
     RealSenseProperties props;
     auto start = std::chrono::high_resolution_clock::now();
-    rs2_ctx_ = rs2_ctx;
     try {
         std::lock_guard<std::mutex> lock(g_realsense_module_lock);
         this->props_ = initialize(cfg);
@@ -850,12 +849,11 @@ std::string printDeviceInfo(rs2::device selected_device) {
 }
 
 std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
-    std::shared_ptr<DeviceProperties> device_props, std::string target_serial_number,
-    std::shared_ptr<rs2::context> rs2_ctx) {
+    std::shared_ptr<DeviceProperties> device_props, std::string target_serial_number) {
     rs2::device_list devices;
     rs2::device selected_device;
 
-    devices = rs2_ctx->query_devices();
+    devices = rs2_ctx.query_devices();
 
     if (devices.size() == 0) {
         throw std::runtime_error("no devices connected; please connect an Intel RealSense device");
@@ -908,7 +906,7 @@ std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
                           RS2_FORMAT_Z16);
     }
 
-    rs2::pipeline pipeline(*rs2_ctx);
+    rs2::pipeline pipeline(rs2_ctx);
     pipeline.start(cfg);
 
     auto fillProps = [](auto intrinsics, std::string distortionModel) -> CameraProperties {
@@ -975,8 +973,7 @@ std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
 // This is the global callback registered with the RealSense context.
 // It dispatches events to the appropriate CameraRealSense instance.
 
-void on_device_reconnect(rs2::event_information &info, std::shared_ptr<DeviceProperties> device,
-                         std::shared_ptr<rs2::context> rs2_ctx) {
+void on_device_reconnect(rs2::event_information &info, std::shared_ptr<DeviceProperties> device) {
     if (device == nullptr) {
         VIAM_SDK_LOG(error) << "[on_device_reconnect] received null device properties.";
         return;
@@ -1004,8 +1001,7 @@ void on_device_reconnect(rs2::event_information &info, std::shared_ptr<DevicePro
         rs2::pipeline new_pipeline;
         {
             std::lock_guard<std::mutex> lock(g_realsense_module_lock);
-            std::tie(new_pipeline, props) =
-                startPipeline(device, device->active_serial_number, rs2_ctx);
+            std::tie(new_pipeline, props) = startPipeline(device, device->active_serial_number);
         }
         std::lock_guard<std::mutex> device_lock(device->pipeline_mu);
         VIAM_SDK_LOG(info) << "pipeline restarted";
@@ -1091,7 +1087,7 @@ std::vector<std::string> validate(sdk::ResourceConfig cfg) {
     }
 }
 
-int serve(int argc, char **argv, std::shared_ptr<rs2::context> rs2_ctx) {
+int serve(int argc, char **argv) {
     for (size_t i = 0; i < argc; i++) {
         if (std::string(argv[i]) == "--log-level=debug") {
             module_level_debug.store(true);
@@ -1100,15 +1096,14 @@ int serve(int argc, char **argv, std::shared_ptr<rs2::context> rs2_ctx) {
     }
     std::shared_ptr<sdk::ModelRegistration> mr = std::make_shared<sdk::ModelRegistration>(
         sdk::API::get<sdk::Camera>(), sdk::Model{kAPINamespace, kAPIType, kAPISubtype},
-        [rs2_ctx](sdk::Dependencies deps,
-                  sdk::ResourceConfig cfg) -> std::shared_ptr<sdk::Resource> {
-            return std::make_unique<CameraRealSense>(deps, cfg, rs2_ctx);
+        [](sdk::Dependencies deps, sdk::ResourceConfig cfg) -> std::shared_ptr<sdk::Resource> {
+            return std::make_unique<CameraRealSense>(deps, cfg);
         },
         validate);
 
     std::vector<std::shared_ptr<sdk::ModelRegistration>> mrs = {mr};
     auto module_service = std::make_shared<sdk::ModuleService>(argc, argv, mrs);
-    auto callback = [rs2_ctx](rs2::event_information &info) {
+    auto callback = [](rs2::event_information &info) {
         if (module_level_debug.load()) {
             VIAM_SDK_LOG(info) << "[device_changed] thread ID: "
                                << std::hash<std::thread::id>{}(std::this_thread::get_id());
@@ -1172,7 +1167,7 @@ int serve(int argc, char **argv, std::shared_ptr<rs2::context> rs2_ctx) {
 
         for (auto &device_props : devices_to_reconnect) {
             try {
-                on_device_reconnect(info, device_props, rs2_ctx);
+                on_device_reconnect(info, device_props);
             } catch (const std::exception &e) {
                 VIAM_SDK_LOG(error) << "[device_changed] failed to reconnect device "
                                     << device_props->active_serial_number << ": " << e.what();
@@ -1182,7 +1177,7 @@ int serve(int argc, char **argv, std::shared_ptr<rs2::context> rs2_ctx) {
 
     {
         std::lock_guard<std::mutex> lock(g_realsense_module_lock);
-        rs2_ctx->set_devices_changed_callback(callback);
+        rs2_ctx.set_devices_changed_callback(callback);
         if (module_level_debug.load()) {
             VIAM_SDK_LOG(info) << "global device changed callback registered.";
         }

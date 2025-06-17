@@ -14,9 +14,6 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  rs2::context rs2_ctx;
-
   viam::sdk::Instance instance;
-  return viam::realsense::serve(argc, argv,
-                                std::make_shared<rs2::context>(rs2_ctx));
+  return viam::realsense::serve(argc, argv);
 }
