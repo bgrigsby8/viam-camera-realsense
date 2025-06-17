@@ -690,6 +690,7 @@ void frameLoop(std::promise<void> &ready, std::shared_ptr<DeviceProperties> devi
             }
 
             rs2::frameset frames;
+            const uint timeoutMillis = 2000;
             /*
                 D435 1920x1080 RGB + Depth ~20ms on a Raspberry Pi 4 Model B
             */
@@ -700,14 +701,14 @@ void frameLoop(std::promise<void> &ready, std::shared_ptr<DeviceProperties> devi
                     VIAM_SDK_LOG(info) << "pipeline waiting for frames with pointer id: "
                                        << &deviceProps->pipeline;
                 }
-                succ = deviceProps->pipeline.try_wait_for_frames(&frames, RS2_DEFAULT_TIMEOUT);
+                succ = deviceProps->pipeline.try_wait_for_frames(&frames, timeoutMillis);
             }
             if (prevSucc) {
             }
             if (!succ) {
                 if (debug_enabled) {
                     VIAM_SDK_LOG(error) << "[frameLoop] could not get frames from realsense after "
-                                        << RS2_DEFAULT_TIMEOUT << "ms";
+                                        << timeoutMillis << "ms";
                 }
                 std::this_thread::sleep_for(failureWait);
                 continue;
@@ -972,6 +973,75 @@ std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
 
 // This is the global callback registered with the RealSense context.
 // It dispatches events to the appropriate CameraRealSense instance.
+void global_device_changed_handler(rs2::event_information &info) {
+    if (module_level_debug.load()) {
+        VIAM_SDK_LOG(info) << "[device_changed] thread ID: "
+                           << std::hash<std::thread::id>{}(std::this_thread::get_id());
+    }
+    if (module_shutting_down.load()) {
+        VIAM_SDK_LOG(info) << "[device_changed] module shutting down, ignoring "
+                              "device changed event.";
+        return;
+    }
+
+    std::vector<std::shared_ptr<DeviceProperties>> devices_to_reconnect;
+    {
+        VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
+        std::lock_guard<std::mutex> lock(g_realsense_module_lock);
+
+        // TODO: please also handle (indicate that the background frameloop
+        // should terminate maybe set shouldrun to false?) unplugs not just
+        // replugs (the below logic)
+        for (auto &&dev_info : info.get_new_devices()) {
+            // assures we're checking a device that was part of the "added"
+            // event
+            if (!info.was_added(dev_info)) {
+                continue;
+            }
+
+            std::string serial_number;
+            try {
+                serial_number = dev_info.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+            } catch (const rs2::error &e) {
+                VIAM_SDK_LOG(error) << "[device_changed] failed to get serial "
+                                       "number for new device: "
+                                    << e.what();
+                continue;
+            }
+
+            VIAM_SDK_LOG(info) << "[device_changed] device added event for S/N: " << serial_number;
+
+            auto it = registered_devices_.find(serial_number);
+            if (it == registered_devices_.end()) {
+                VIAM_SDK_LOG(info)
+                    << "[device_changed] no active Viam resource matches S/N: " << serial_number
+                    << ". Ignoring event for this device.";
+                continue;
+            }
+
+            auto device_props_sptr = it->second.lock();
+            if (!device_props_sptr) {
+                VIAM_SDK_LOG(error) << "[device_changed] device S/N: " << serial_number
+                                    << " found in map but weak_ptr is expired.";
+                registered_devices_.erase(it);
+                continue;
+            }
+
+            VIAM_SDK_LOG(info) << "[device_changed] matching active device found for S/N: "
+                               << serial_number << ". Scheduling reconnect.";
+            devices_to_reconnect.push_back(device_props_sptr);
+        }
+    }  // g_realsense_module_lock releases
+
+    for (auto &device_props : devices_to_reconnect) {
+        try {
+            on_device_reconnect(info, device_props);
+        } catch (const std::exception &e) {
+            VIAM_SDK_LOG(error) << "[device_changed] failed to reconnect device "
+                                << device_props->active_serial_number << ": " << e.what();
+        }
+    }
+}
 
 void on_device_reconnect(rs2::event_information &info, std::shared_ptr<DeviceProperties> device) {
     if (device == nullptr) {
@@ -1103,81 +1173,10 @@ int serve(int argc, char **argv) {
 
     std::vector<std::shared_ptr<sdk::ModelRegistration>> mrs = {mr};
     auto module_service = std::make_shared<sdk::ModuleService>(argc, argv, mrs);
-    auto callback = [](rs2::event_information &info) {
-        if (module_level_debug.load()) {
-            VIAM_SDK_LOG(info) << "[device_changed] thread ID: "
-                               << std::hash<std::thread::id>{}(std::this_thread::get_id());
-        }
-        if (module_shutting_down.load()) {
-            VIAM_SDK_LOG(info) << "[device_changed] module shutting down, ignoring "
-                                  "device changed event.";
-            return;
-        }
-
-        std::vector<std::shared_ptr<DeviceProperties>> devices_to_reconnect;
-        {
-            VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
-            std::lock_guard<std::mutex> lock(g_realsense_module_lock);
-
-            // TODO: please also handle (indicate that the background frameloop
-            // should terminate maybe set shouldrun to false?) unplugs not just
-            // replugs (the below logic)
-            for (auto &&dev_info : info.get_new_devices()) {
-                // assures we're checking a device that was part of the "added"
-                // event
-                if (!info.was_added(dev_info)) {
-                    continue;
-                }
-
-                std::string serial_number;
-                try {
-                    serial_number = dev_info.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-                } catch (const rs2::error &e) {
-                    VIAM_SDK_LOG(error) << "[device_changed] failed to get serial "
-                                           "number for new device: "
-                                        << e.what();
-                    continue;
-                }
-
-                VIAM_SDK_LOG(info)
-                    << "[device_changed] device added event for S/N: " << serial_number;
-
-                auto it = registered_devices_.find(serial_number);
-                if (it == registered_devices_.end()) {
-                    VIAM_SDK_LOG(info)
-                        << "[device_changed] no active Viam resource matches S/N: " << serial_number
-                        << ". Ignoring event for this device.";
-                    continue;
-                }
-
-                auto device_props_sptr = it->second.lock();
-                if (!device_props_sptr) {
-                    VIAM_SDK_LOG(error) << "[device_changed] device S/N: " << serial_number
-                                        << " found in map but weak_ptr is expired.";
-                    registered_devices_.erase(it);
-                    continue;
-                }
-
-                VIAM_SDK_LOG(info)
-                    << "[device_changed] matching active device found for S/N: " << serial_number
-                    << ". Scheduling reconnect.";
-                devices_to_reconnect.push_back(device_props_sptr);
-            }
-        }  // g_realsense_module_lock releases
-
-        for (auto &device_props : devices_to_reconnect) {
-            try {
-                on_device_reconnect(info, device_props);
-            } catch (const std::exception &e) {
-                VIAM_SDK_LOG(error) << "[device_changed] failed to reconnect device "
-                                    << device_props->active_serial_number << ": " << e.what();
-            }
-        }
-    };
 
     {
         std::lock_guard<std::mutex> lock(g_realsense_module_lock);
-        rs2_ctx.set_devices_changed_callback(callback);
+        rs2_ctx.set_devices_changed_callback(global_device_changed_handler);
         if (module_level_debug.load()) {
             VIAM_SDK_LOG(info) << "global device changed callback registered.";
         }
