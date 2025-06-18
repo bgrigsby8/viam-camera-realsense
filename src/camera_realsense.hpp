@@ -126,6 +126,7 @@ class CameraRealSense : public sdk::Camera, public sdk::Reconfigurable {
     sdk::Camera::point_cloud get_point_cloud(std::string mime_type,
                                              const sdk::ProtoStruct &extra) override;
     std::vector<sdk::GeometryConfig> get_geometries(const sdk::ProtoStruct &extra) override;
+    std::unique_ptr<std::thread> cameraThread_
 };
 
 }  // namespace realsense
