@@ -41,6 +41,10 @@ static rs2::context rs2_ctx;
 // Global registry for devices and their properties/pipelines
 static std::map<std::string, std::weak_ptr<DeviceProperties>> registered_devices_;
 
+static std::mutex rs_devices_mu;
+// Global registry for realsense devices
+static std::map<std::string, std::shared_ptr<rs2::device>> rs_devices;
+
 // Global flag to signal that the module is shutting down to prevent callback
 // invocation during cleanup
 // NOTE: Nick S: This is an imcomplete solution. We don't confirm that we
@@ -823,6 +827,13 @@ void global_device_changed_handler(rs2::event_information &info) {
         return;
     }
 
+    for (auto &[serial, dev] : rs_devices) {
+        if (info.was_removed(dev)) {
+            VIAM_SDK_LOG(info) << "[device_changed] device was removed. S/N: " << serial;
+            rs_devices.erase(serial);
+        }
+    }
+
     std::vector<std::shared_ptr<DeviceProperties>> devices_to_reconnect;
     {
         VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
@@ -875,6 +886,8 @@ void global_device_changed_handler(rs2::event_information &info) {
     for (auto &device_props : devices_to_reconnect) {
         try {
             on_device_reconnect(info, device_props);
+            std::lock_guard<std::mutex> lock(rs_devices_mu);
+            rs_devices.insert({device_props->active_serial_number, device_props->rs_device});
         } catch (const std::exception &e) {
             VIAM_SDK_LOG(error) << "[device_changed] failed to reconnect device "
                                 << device_props->active_serial_number << ": " << e.what();
@@ -1011,6 +1024,26 @@ std::vector<std::string> validate(sdk::ResourceConfig cfg) {
     }
 }
 
+void start_rs_sdk() {
+    rs2::device_list devices;
+    {
+        std::lock_guard<std::mutex> lock(g_realsense_module_lock);
+        devices = rs2_ctx.query_devices();
+        rs2_ctx.set_devices_changed_callback(global_device_changed_handler);
+        if (module_level_debug.load()) {
+            VIAM_SDK_LOG(info) << "global device changed callback registered.";
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(rs_devices_mu);
+        for (auto &&dev_info_rs2 : devices) {
+            std::string current_serial_number =
+                dev_info_rs2.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+            rs_devices[current_serial_number] = std::make_shared<rs2::device>(dev_info_rs2);
+        }
+    }
+}
+
 int serve(int argc, char **argv) {
     for (size_t i = 0; i < argc; i++) {
         if (std::string(argv[i]) == "--log-level=debug") {
@@ -1018,6 +1051,9 @@ int serve(int argc, char **argv) {
             rs2::log_to_console(RS2_LOG_SEVERITY_DEBUG);
         }
     }
+
+    start_rs_sdk();
+
     std::shared_ptr<sdk::ModelRegistration> mr = std::make_shared<sdk::ModelRegistration>(
         sdk::API::get<sdk::Camera>(), sdk::Model{kAPINamespace, kAPIType, kAPISubtype},
         [](sdk::Dependencies deps, sdk::ResourceConfig cfg) -> std::shared_ptr<sdk::Resource> {
@@ -1027,14 +1063,6 @@ int serve(int argc, char **argv) {
 
     std::vector<std::shared_ptr<sdk::ModelRegistration>> mrs = {mr};
     auto module_service = std::make_shared<sdk::ModuleService>(argc, argv, mrs);
-
-    {
-        std::lock_guard<std::mutex> lock(g_realsense_module_lock);
-        rs2_ctx.set_devices_changed_callback(global_device_changed_handler);
-        if (module_level_debug.load()) {
-            VIAM_SDK_LOG(info) << "global device changed callback registered.";
-        }
-    }
 
     module_service->serve();
     module_shutting_down.store(true);
