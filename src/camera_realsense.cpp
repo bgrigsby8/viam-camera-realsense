@@ -831,7 +831,10 @@ void global_device_changed_handler(rs2::event_information &info) {
     for (auto &[serial, dev] : rs_devices) {
         if (info.was_removed(*dev)) {
             VIAM_SDK_LOG(info) << "[device_changed] device removed event for S/N: " << serial;
-            rs_devices.erase(serial);
+            {
+                std::lock_guard<std::mutex> lock(rs_devices_mu);
+                rs_devices.erase(serial);
+            }
         }
     }
 
@@ -1041,10 +1044,9 @@ void start_rs_sdk() {
     }
     {
         std::lock_guard<std::mutex> lock(rs_devices_mu);
-        for (auto &&dev_info_rs2 : devices) {
-            std::string current_serial_number =
-                dev_info_rs2.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-            rs_devices[current_serial_number] = std::make_shared<rs2::device>(dev_info_rs2);
+        for (auto &&dev : devices) {
+            std::string current_serial_number = dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+            rs_devices[current_serial_number] = std::make_shared<rs2::device>(dev);
         }
     }
 }
