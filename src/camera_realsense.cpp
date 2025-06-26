@@ -828,8 +828,8 @@ void global_device_changed_handler(rs2::event_information &info) {
     }
     VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
 
-    for (auto &[serial, dev] : rs_devices) {
-        if (info.was_removed(*dev)) {
+    for (auto &[serial, rs_dev] : rs_devices) {
+        if (info.was_removed(*rs_dev)) {
             VIAM_SDK_LOG(info) << "[device_changed] device removed event for S/N: " << serial;
             {
                 std::lock_guard<std::mutex> lock(rs_devices_mu);
@@ -845,16 +845,16 @@ void global_device_changed_handler(rs2::event_information &info) {
         // TODO: please also handle (indicate that the background frameloop
         // should terminate maybe set shouldrun to false?) unplugs not just
         // replugs (the below logic)
-        for (auto &&dev_info : info.get_new_devices()) {
+        for (auto &&rs_dev : info.get_new_devices()) {
             // assures we're checking a device that was part of the "added"
             // event
-            if (!info.was_added(dev_info)) {
+            if (!info.was_added(rs_dev)) {
                 continue;
             }
 
             std::string serial_number;
             try {
-                serial_number = dev_info.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+                serial_number = rs_dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
             } catch (const rs2::error &e) {
                 VIAM_SDK_LOG(error) << "[device_changed] failed to get serial "
                                        "number for new device: "
@@ -882,17 +882,17 @@ void global_device_changed_handler(rs2::event_information &info) {
 
             VIAM_SDK_LOG(info) << "[device_changed] matching active device found for S/N: "
                                << serial_number << ". Scheduling reconnect.";
-            devices_to_reconnect.emplace_back(device_props_sptr, dev_info);
+            devices_to_reconnect.emplace_back(device_props_sptr, rs_dev);
         }
     }  // g_realsense_module_lock releases
 
-    for (auto &[device_props, rs2_device] : devices_to_reconnect) {
+    for (auto &[device_props, rs_dev] : devices_to_reconnect) {
         try {
             on_device_reconnect(info, device_props);
             {
                 std::lock_guard<std::mutex> lock(rs_devices_mu);
                 rs_devices[device_props->active_serial_number] =
-                    std::make_shared<rs2::device>(rs2_device);
+                    std::make_shared<rs2::device>(rs_dev);
             }
         } catch (const std::exception &e) {
             VIAM_SDK_LOG(error) << "[device_changed] failed to reconnect device "
