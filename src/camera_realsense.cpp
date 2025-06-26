@@ -826,17 +826,17 @@ void global_device_changed_handler(rs2::event_information &info) {
                               "device changed event.";
         return;
     }
+    VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
 
     for (auto &[serial, dev] : rs_devices) {
-        if (info.was_removed(dev)) {
+        if (info.was_removed(*dev)) {
             VIAM_SDK_LOG(info) << "[device_changed] device was removed. S/N: " << serial;
             rs_devices.erase(serial);
         }
     }
 
-    std::vector<std::shared_ptr<DeviceProperties>> devices_to_reconnect;
+    std::vector<std::pair<std::shared_ptr<DeviceProperties>, rs2::device>> devices_to_reconnect;
     {
-        VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
         std::lock_guard<std::mutex> lock(g_realsense_module_lock);
 
         // TODO: please also handle (indicate that the background frameloop
@@ -879,15 +879,20 @@ void global_device_changed_handler(rs2::event_information &info) {
 
             VIAM_SDK_LOG(info) << "[device_changed] matching active device found for S/N: "
                                << serial_number << ". Scheduling reconnect.";
-            devices_to_reconnect.push_back(device_props_sptr);
+            devices_to_reconnect.emplace_back(device_props_sptr, dev_info);
         }
     }  // g_realsense_module_lock releases
 
-    for (auto &device_props : devices_to_reconnect) {
+    for (auto &[device_props, rs2_device] : devices_to_reconnect) {
         try {
             on_device_reconnect(info, device_props);
-            std::lock_guard<std::mutex> lock(rs_devices_mu);
-            rs_devices.insert({device_props->active_serial_number, device_props->rs_device});
+            {
+                std::lock_guard<std::mutex> lock(rs_devices_mu);
+                VIAM_SDK_LOG(debug) << "[device_changed] adding device to rs_devices: "
+                                    << device_props->active_serial_number;
+                rs_devices[device_props->active_serial_number] =
+                    std::make_shared<rs2::device>(rs2_device);
+            }
         } catch (const std::exception &e) {
             VIAM_SDK_LOG(error) << "[device_changed] failed to reconnect device "
                                 << device_props->active_serial_number << ": " << e.what();
