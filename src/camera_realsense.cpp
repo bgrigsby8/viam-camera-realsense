@@ -24,8 +24,8 @@ namespace realsense {
 // Build a stringstream and automatically convert to string, all in one line.
 //
 // Global lock to serialize access to module thread state. It protects:
-// 1. RealSense context
-// 2. all objects derived from the RealSense context e.g. rs2 device objects
+// 1. RealSense context (rs2_ctx)
+// 2. pipeline creation and initialization from the context
 // 3. the invariant that there is only one pipeline per device e.g.
 // pipeline.start
 // 4. the registered devices map
