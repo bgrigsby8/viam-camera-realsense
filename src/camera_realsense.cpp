@@ -38,12 +38,12 @@ static std::mutex g_realsense_module_lock;
 // module. It is shared across threads; we synchronize accesses when calling
 // context methods concurrently.
 static rs2::context rs2_ctx;
-// Global registry for devices and their properties/pipelines
+// Global registry for configured devices and their properties/pipelines
 static std::map<std::string, std::weak_ptr<DeviceProperties>> registered_devices_;
 
-static std::mutex rs_devices_mu;
-// Global registry for realsense devices
-static std::map<std::string, std::shared_ptr<rs2::device>> rs_devices;
+static std::mutex rs2_devices_mu;
+// Global registry for connected realsense devices
+static std::map<std::string, std::shared_ptr<rs2::device>> rs2_devices;
 
 // Global flag to signal that the module is shutting down to prevent callback
 // invocation during cleanup
@@ -829,13 +829,13 @@ void global_device_changed_handler(rs2::event_information &info) {
     VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
 
     {
-        std::lock_guard<std::mutex> lock(rs_devices_mu);
+        std::lock_guard<std::mutex> lock(rs2_devices_mu);
         // Use iterator-based loop bc we're modifying the container during iteration.
-        for (auto it = rs_devices.begin(); it != rs_devices.end();) {
+        for (auto it = rs2_devices.begin(); it != rs2_devices.end();) {
             if (info.was_removed(*it->second)) {
                 VIAM_SDK_LOG(info)
                     << "[device_changed] device removed event for S/N: " << it->first;
-                it = rs_devices.erase(it);
+                it = rs2_devices.erase(it);
             } else {
                 ++it;
             }
@@ -849,16 +849,16 @@ void global_device_changed_handler(rs2::event_information &info) {
         // TODO: please also handle (indicate that the background frameloop
         // should terminate maybe set shouldrun to false?) unplugs not just
         // replugs (the below logic)
-        for (auto &&rs_dev : info.get_new_devices()) {
+        for (auto &&rs2_dev : info.get_new_devices()) {
             // assures we're checking a device that was part of the "added"
             // event
-            if (!info.was_added(rs_dev)) {
+            if (!info.was_added(rs2_dev)) {
                 continue;
             }
 
             std::string serial_number;
             try {
-                serial_number = rs_dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+                serial_number = rs2_dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
             } catch (const rs2::error &e) {
                 VIAM_SDK_LOG(error) << "[device_changed] failed to get serial "
                                        "number for new device: "
@@ -886,17 +886,17 @@ void global_device_changed_handler(rs2::event_information &info) {
 
             VIAM_SDK_LOG(info) << "[device_changed] matching active device found for S/N: "
                                << serial_number << ". Scheduling reconnect.";
-            devices_to_reconnect.emplace_back(device_props_sptr, rs_dev);
+            devices_to_reconnect.emplace_back(device_props_sptr, rs2_dev);
         }
     }  // g_realsense_module_lock releases
 
-    for (auto &[device_props, rs_dev] : devices_to_reconnect) {
+    for (auto &[device_props, rs2_dev] : devices_to_reconnect) {
         try {
             on_device_reconnect(info, device_props);
             {
-                std::lock_guard<std::mutex> lock(rs_devices_mu);
-                rs_devices[device_props->active_serial_number] =
-                    std::make_shared<rs2::device>(rs_dev);
+                std::lock_guard<std::mutex> lock(rs2_devices_mu);
+                rs2_devices[device_props->active_serial_number] =
+                    std::make_shared<rs2::device>(rs2_dev);
             }
         } catch (const std::exception &e) {
             VIAM_SDK_LOG(error) << "[device_changed] failed to reconnect device "
@@ -1034,28 +1034,28 @@ std::vector<std::string> validate(sdk::ResourceConfig cfg) {
     }
 }
 
-void start_rs_sdk() {
-    rs2::device_list devices;
+void start_rs2_sdk() {
+    rs2::device_list connected_devices;
     {
         std::lock_guard<std::mutex> lock(g_realsense_module_lock);
-        devices = rs2_ctx.query_devices();
+        connected_devices = rs2_ctx.query_devices();
         rs2_ctx.set_devices_changed_callback(global_device_changed_handler);
         if (module_level_debug.load()) {
-            VIAM_SDK_LOG(info) << "[start_rs_sdk] global device changed callback registered.";
+            VIAM_SDK_LOG(info) << "[start_rs2_sdk] global device changed callback registered.";
         }
     }
     {
-        std::lock_guard<std::mutex> lock(rs_devices_mu);
-        if (devices.size() == 0) {
-            VIAM_SDK_LOG(info) << "[start_rs_sdk] no connected devices detected";
+        std::lock_guard<std::mutex> lock(rs2_devices_mu);
+        if (connected_devices.size() == 0) {
+            VIAM_SDK_LOG(info) << "[start_rs2_sdk] no connected devices detected";
             return;
         }
-        for (size_t index = 0; index < devices.size(); ++index) {
-            auto &&dev = devices[index];
-            VIAM_SDK_LOG(info) << "[start_rs_sdk] detected connected device [" << index + 1
-                               << " out of " << devices.size() << "]: ";
-            std::string current_serial_number = printDeviceInfo(dev);
-            rs_devices[current_serial_number] = std::make_shared<rs2::device>(dev);
+        for (size_t index = 0; index < connected_devices.size(); ++index) {
+            auto &&rs2_dev = connected_devices[index];
+            VIAM_SDK_LOG(info) << "[start_rs2_sdk] detected connected device [" << index + 1
+                               << " out of " << connected_devices.size() << "]: ";
+            std::string current_serial_number = printDeviceInfo(rs2_dev);
+            rs2_devices[current_serial_number] = std::make_shared<rs2::device>(rs2_dev);
         }
     }
 }
@@ -1068,7 +1068,7 @@ int serve(int argc, char **argv) {
         }
     }
 
-    start_rs_sdk();
+    start_rs2_sdk();
 
     std::shared_ptr<sdk::ModelRegistration> mr = std::make_shared<sdk::ModelRegistration>(
         sdk::API::get<sdk::Camera>(), sdk::Model{kAPINamespace, kAPIType, kAPISubtype},
