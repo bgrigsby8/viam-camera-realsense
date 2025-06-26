@@ -830,7 +830,7 @@ void global_device_changed_handler(rs2::event_information &info) {
 
     for (auto &[serial, dev] : rs_devices) {
         if (info.was_removed(*dev)) {
-            VIAM_SDK_LOG(info) << "[device_changed] device was removed. S/N: " << serial;
+            VIAM_SDK_LOG(info) << "[device_changed] device removed event for S/N: " << serial;
             rs_devices.erase(serial);
         }
     }
