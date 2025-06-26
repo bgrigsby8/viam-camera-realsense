@@ -828,12 +828,16 @@ void global_device_changed_handler(rs2::event_information &info) {
     }
     VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
 
-    for (auto &[serial, rs_dev] : rs_devices) {
-        if (info.was_removed(*rs_dev)) {
-            VIAM_SDK_LOG(info) << "[device_changed] device removed event for S/N: " << serial;
-            {
-                std::lock_guard<std::mutex> lock(rs_devices_mu);
-                rs_devices.erase(serial);
+    {
+        std::lock_guard<std::mutex> lock(rs_devices_mu);
+        // Use iterator-based loop bc we're modifying the container during iteration.
+        for (auto it = rs_devices.begin(); it != rs_devices.end();) {
+            if (info.was_removed(*it->second)) {
+                VIAM_SDK_LOG(info)
+                    << "[device_changed] device removed event for S/N: " << it->first;
+                it = rs_devices.erase(it);
+            } else {
+                ++it;
             }
         }
     }
