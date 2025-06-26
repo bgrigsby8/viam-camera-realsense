@@ -656,7 +656,6 @@ float getDepthScale(rs2::device dev) {
 }
 
 std::string printDeviceInfo(rs2::device selected_device) {
-    VIAM_SDK_LOG(info) << "starting pipeline with selected device:";
     std::string serial_from_rs2;
     serial_from_rs2 = selected_device.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
     auto usb_type = std::string(selected_device.get_info(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR));
@@ -723,6 +722,7 @@ std::tuple<rs2::pipeline, RealSenseProperties> startPipeline(
                                  target_serial_number);
     }
 
+    VIAM_SDK_LOG(info) << "starting pipeline with selected device:";
     auto serial_from_rs2 = printDeviceInfo(selected_device);
 
     float depthScaleMm = 0.0;
@@ -1037,13 +1037,20 @@ void start_rs_sdk() {
         devices = rs2_ctx.query_devices();
         rs2_ctx.set_devices_changed_callback(global_device_changed_handler);
         if (module_level_debug.load()) {
-            VIAM_SDK_LOG(info) << "global device changed callback registered.";
+            VIAM_SDK_LOG(info) << "[start_rs_sdk] global device changed callback registered.";
         }
     }
     {
         std::lock_guard<std::mutex> lock(rs_devices_mu);
-        for (auto &&dev : devices) {
-            std::string current_serial_number = dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+        if (devices.size() == 0) {
+            VIAM_SDK_LOG(info) << "[start_rs_sdk] no connected devices detected";
+            return;
+        }
+        for (size_t index = 0; index < devices.size(); ++index) {
+            auto &&dev = devices[index];
+            VIAM_SDK_LOG(info) << "[start_rs_sdk] detected connected device [" << index + 1
+                               << " out of " << devices.size() << "]: ";
+            std::string current_serial_number = printDeviceInfo(dev);
             rs_devices[current_serial_number] = std::make_shared<rs2::device>(dev);
         }
     }
