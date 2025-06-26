@@ -891,8 +891,6 @@ void global_device_changed_handler(rs2::event_information &info) {
             on_device_reconnect(info, device_props);
             {
                 std::lock_guard<std::mutex> lock(rs_devices_mu);
-                VIAM_SDK_LOG(debug) << "[device_changed] adding device to rs_devices: "
-                                    << device_props->active_serial_number;
                 rs_devices[device_props->active_serial_number] =
                     std::make_shared<rs2::device>(rs2_device);
             }
