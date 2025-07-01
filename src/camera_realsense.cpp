@@ -41,9 +41,9 @@ static rs2::context rs2_ctx;
 // Global registry for configured devices and their properties/pipelines
 static std::map<std::string, std::weak_ptr<DeviceProperties>> registered_devices_;
 
-static std::mutex rs2_devices_mu;
+static std::mutex connected_rs2_devices_mu;
 // Global registry for connected realsense devices
-static std::map<std::string, std::shared_ptr<rs2::device>> rs2_devices;
+static std::map<std::string, std::shared_ptr<rs2::device>> connected_rs2_devices;
 
 // Global flag to signal that the module is shutting down to prevent callback
 // invocation during cleanup
@@ -829,16 +829,19 @@ void global_device_changed_handler(rs2::event_information &info) {
     VIAM_SDK_LOG(info) << "[device_changed] global device changed event received.";
 
     {
-        std::lock_guard<std::mutex> lock(rs2_devices_mu);
-        // Use iterator-based loop bc we're modifying the container during iteration.
-        for (auto it = rs2_devices.begin(); it != rs2_devices.end();) {
-            if (info.was_removed(*it->second)) {
+        std::lock_guard<std::mutex> lock(connected_rs2_devices_mu);
+
+        std::vector<std::string> devices_to_remove;
+        for (const auto &device : connected_rs2_devices) {
+            if (info.was_removed(*device.second)) {
                 VIAM_SDK_LOG(info)
-                    << "[device_changed] device removed event for S/N: " << it->first;
-                it = rs2_devices.erase(it);
-            } else {
-                ++it;
+                    << "[device_changed] device removed event for S/N: " << device.first;
+                devices_to_remove.push_back(device.first);
             }
+        }
+
+        for (const auto &serial : devices_to_remove) {
+            connected_rs2_devices.erase(serial);
         }
     }
 
@@ -894,8 +897,8 @@ void global_device_changed_handler(rs2::event_information &info) {
         try {
             on_device_reconnect(info, device_props);
             {
-                std::lock_guard<std::mutex> lock(rs2_devices_mu);
-                rs2_devices[device_props->active_serial_number] =
+                std::lock_guard<std::mutex> lock(connected_rs2_devices_mu);
+                connected_rs2_devices[device_props->active_serial_number] =
                     std::make_shared<rs2::device>(rs2_dev);
             }
         } catch (const std::exception &e) {
@@ -1045,7 +1048,7 @@ void start_rs2_sdk() {
         }
     }
     {
-        std::lock_guard<std::mutex> lock(rs2_devices_mu);
+        std::lock_guard<std::mutex> lock(connected_rs2_devices_mu);
         if (connected_devices.size() == 0) {
             VIAM_SDK_LOG(info) << "[start_rs2_sdk] no connected devices detected";
             return;
@@ -1055,7 +1058,7 @@ void start_rs2_sdk() {
             VIAM_SDK_LOG(info) << "[start_rs2_sdk] detected connected device [" << index + 1
                                << " out of " << connected_devices.size() << "]: ";
             std::string current_serial_number = printDeviceInfo(rs2_dev);
-            rs2_devices[current_serial_number] = std::make_shared<rs2::device>(rs2_dev);
+            connected_rs2_devices[current_serial_number] = std::make_shared<rs2::device>(rs2_dev);
         }
     }
 }
