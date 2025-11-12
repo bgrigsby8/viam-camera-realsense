@@ -119,7 +119,7 @@ public:
             error_msg << "; ";
           error_msg << device_errors[i];
         }
-        error_msg << "Device(s) may be in an invalid state or have firmware compatibility issues."
+        error_msg << ". Device(s) may be in an invalid state or have firmware compatibility issues.";
         throw std::runtime_error(error_msg.str());
       }
       return configs;
