@@ -110,7 +110,7 @@ void printDeviceInfo(DeviceT const &dev, viam::sdk::LogSource &logger) {
     VIAM_DEVICE_LOG(logger, info) << info.str();
   } catch (const std::exception &e) {
     VIAM_DEVICE_LOG(logger, error)
-        << "[printDeviceInfo] Failed to retrieve device info: " << e.what()
+        << "[printDeviceInfo] Failed to retrieve device info with error: " << e.what()
         << ". Device may be in an invalid state or have firmware compatibility issues.";
   }
 }
