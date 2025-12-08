@@ -53,4 +53,10 @@ class ViamRealsense(ConanFile):
         copy(self, pattern="module.tar.gz", src=self.build_folder, dst=self.package_folder)
 
     def deploy(self):
-        copy(self, pattern="module.tar.gz", src=self.package_folder, dst=self.deploy_folder)
+        # For editable packages, package_folder might equal deploy_folder, so copy from build_folder
+        # In CI/CD, build_folder might be None, so check it exists first
+        src = self.package_folder
+        if self.build_folder and os.path.exists(os.path.join(self.build_folder, "module.tar.gz")):
+            src = self.build_folder
+        if src != self.deploy_folder:
+            copy(self, pattern="module.tar.gz", src=src, dst=self.deploy_folder)
