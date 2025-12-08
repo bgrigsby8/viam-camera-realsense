@@ -12,6 +12,8 @@ on:
         type: string
         default: main
         description: realsense module branch to run on
+  pull_request:
+
 
 permissions:
   id-token: write
@@ -129,6 +131,7 @@ jobs:
           conan install --requires=viam-camera-realsense/0.0.1 --deployer-package "&" -o "viam-cpp-sdk/*:shared=False" -v v
 
       - name: Upload module artifact
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact-name }}
