@@ -65,7 +65,8 @@ install(TARGETS
     viamrealsense 
     viam-camera-realsense 
     DESTINATION .)
-install( FILES meta.json DESTINATION .)
+install(FILES meta.json 99-realsense-libusb.rules DESTINATION .)
+install(PROGRAMS first_run.sh install_udev_rules.sh DESTINATION .)
 
 
 if (VIAM_REALSENSE_ENABLE_TESTS)

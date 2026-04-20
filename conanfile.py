@@ -25,7 +25,7 @@ class ViamRealsense(ConanFile):
         "libzip/*:shared": False
     }
 
-    exports_sources = "CMakeLists.txt", "LICENSE", "src/*", "cmake/*", "meta.json", "test/*"
+    exports_sources = "CMakeLists.txt", "LICENSE", "src/*", "cmake/*", "meta.json", "test/*", "*.sh", "99-realsense-libusb.rules"
 
     version = "0.0.1"
 
@@ -76,6 +76,10 @@ class ViamRealsense(ConanFile):
 
             # Copy meta.json to root
             copy(self, "meta.json", src=self.package_folder, dst=tmp_dir)
+
+            # Copy udev rules and install scripts
+            for pat in ["*.sh", "99-realsense-libusb.rules"]:
+                copy(self, pat, src=self.package_folder, dst=tmp_dir)
 
             self.output.info("Creating module.tar.gz")
             with tarfile.open(os.path.join(self.deploy_folder, "module.tar.gz"), "w|gz") as tar:
