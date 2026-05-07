@@ -911,12 +911,15 @@ public:
             attrs["sensors"].get_unchecked<viam::sdk::ProtoList>();
         bool has_color = false, has_depth = false;
         for (const auto &s : sensors_list) {
-          if (not s.is_a<std::string>()) continue;
+          if (not s.is_a<std::string>())
+            continue;
           auto name = s.get_unchecked<std::string>();
-          if (name == "color") has_color = true;
-          if (name == "depth") has_depth = true;
+          if (name == "color")
+            has_color = true;
+          if (name == "depth")
+            has_depth = true;
         }
-        if (not (has_color and has_depth)) {
+        if (not(has_color and has_depth)) {
           throw std::invalid_argument(
               "align_color_depth requires both 'color' and 'depth' in the "
               "sensors list");
@@ -1382,9 +1385,9 @@ private:
     if (attrs.count("align_color_depth")) {
       align_color_depth = attrs["align_color_depth"].get_unchecked<bool>();
     }
-    auto native_config = realsense::RsResourceConfig(
-        serial, configuration.name(), sensors, width, height,
-        align_color_depth);
+    auto native_config =
+        realsense::RsResourceConfig(serial, configuration.name(), sensors,
+                                    width, height, align_color_depth);
 
     return native_config;
   }
