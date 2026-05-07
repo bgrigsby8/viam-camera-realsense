@@ -136,6 +136,14 @@ struct RsResourceConfig {
   std::vector<sensors::SensorType> sensors{};
   std::optional<int> width{};
   std::optional<int> height{};
+  // When true, depth frames returned by get_images() are spatially aligned
+  // to the color frame using librealsense's rs2::align filter. This makes
+  // depth_np[v, u] correspond to the same physical point as color_np[v, u]
+  // (depth pixel grid is resampled to color frame), which is required for
+  // any consumer that combines a 2D color-image mask with the depth array.
+  // Defaults to false to preserve the historical behavior of returning the
+  // raw, unaligned streams.
+  bool align_color_depth{false};
 
   RsResourceConfig() = default;
 
@@ -143,9 +151,11 @@ struct RsResourceConfig {
                             std::string const &resource_name,
                             std::vector<sensors::SensorType> const &sensors,
                             std::optional<int> width = std::nullopt,
-                            std::optional<int> height = std::nullopt)
+                            std::optional<int> height = std::nullopt,
+                            bool align_color_depth = false)
       : serial_number(serial_number), resource_name(resource_name),
-        sensors(sensors), width(width), height(height) {}
+        sensors(sensors), width(width), height(height),
+        align_color_depth(align_color_depth) {}
   sensors::SensorType getMainSensor() const {
     if (sensors.empty()) {
       throw std::invalid_argument("sensors list is empty");
@@ -456,6 +466,20 @@ public:
       VIAM_RESOURCE_LOG(debug) << "[get_images] start";
       std::string serial_number = config_->serial_number;
       auto fs = latest_frameset_->get();
+
+      // Optionally align depth to color so that depth_np[v, u] and
+      // color_np[v, u] refer to the same physical point. The IR/depth and
+      // RGB sensors on a RealSense are physically offset (~15-55 mm) and
+      // have different FOVs, so without this step a 2D mask drawn on the
+      // color image cannot be used directly to look up depth values. This
+      // is opt-in to preserve the historical behavior of returning the raw
+      // unaligned streams.
+      if (config_->align_color_depth) {
+        // librealsense's align filter is stateful; keep one per thread to
+        // avoid reallocating internal buffers on every call.
+        static thread_local rs2::align align_to_color(RS2_STREAM_COLOR);
+        fs = align_to_color.process(fs);
+      }
 
       std::vector<sensors::SensorType> sensors = config_->sensors;
 
@@ -871,6 +895,32 @@ public:
       int height = attrs["height_px"].get_unchecked<double>();
       if (height <= 0) {
         throw std::invalid_argument("height_px must be positive");
+      }
+    }
+
+    if (attrs.count("align_color_depth")) {
+      if (not attrs["align_color_depth"].is_a<bool>()) {
+        throw std::invalid_argument("align_color_depth must be a bool");
+      }
+      bool align = attrs["align_color_depth"].get_unchecked<bool>();
+      if (align and attrs.count("sensors")) {
+        // Aligning requires both streams in the pipeline. The default
+        // (no `sensors` field) enables both, so we only need to check the
+        // case where the user explicitly listed sensors.
+        auto sensors_list =
+            attrs["sensors"].get_unchecked<viam::sdk::ProtoList>();
+        bool has_color = false, has_depth = false;
+        for (const auto &s : sensors_list) {
+          if (not s.is_a<std::string>()) continue;
+          auto name = s.get_unchecked<std::string>();
+          if (name == "color") has_color = true;
+          if (name == "depth") has_depth = true;
+        }
+        if (not (has_color and has_depth)) {
+          throw std::invalid_argument(
+              "align_color_depth requires both 'color' and 'depth' in the "
+              "sensors list");
+        }
       }
     }
 
@@ -1328,8 +1378,13 @@ private:
     if (attrs.count("height_px")) {
       height = static_cast<int>(attrs["height_px"].get_unchecked<double>());
     }
+    bool align_color_depth = false;
+    if (attrs.count("align_color_depth")) {
+      align_color_depth = attrs["align_color_depth"].get_unchecked<bool>();
+    }
     auto native_config = realsense::RsResourceConfig(
-        serial, configuration.name(), sensors, width, height);
+        serial, configuration.name(), sensors, width, height,
+        align_color_depth);
 
     return native_config;
   }
