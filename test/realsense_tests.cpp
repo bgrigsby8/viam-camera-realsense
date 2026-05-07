@@ -368,6 +368,60 @@ TEST_F(RealsenseTest, ValidateWithEmptySerialNumber) {
   EXPECT_NO_THROW(Realsense<SimpleMockContext>::validate(valid_config));
 }
 
+TEST_F(RealsenseTest, ValidateAcceptsAlignColorDepthBool) {
+  auto attributes = ProtoStruct{};
+  ProtoList sensors = {"color", "depth"};
+  attributes["sensors"] = sensors;
+  attributes["align_color_depth"] = true;
+
+  ResourceConfig valid_config(
+      "rdk:component:camera", "", test_name_, attributes, "",
+      Model("viam", "camera", "realsense"), LinkConfig{}, log_level::info);
+
+  EXPECT_NO_THROW(Realsense<SimpleMockContext>::validate(valid_config));
+}
+
+TEST_F(RealsenseTest, ValidateRejectsAlignColorDepthNonBool) {
+  auto attributes = ProtoStruct{};
+  ProtoList sensors = {"color", "depth"};
+  attributes["sensors"] = sensors;
+  attributes["align_color_depth"] = std::string("yes");
+
+  ResourceConfig bad_config(
+      "rdk:component:camera", "", test_name_, attributes, "",
+      Model("viam", "camera", "realsense"), LinkConfig{}, log_level::info);
+
+  EXPECT_THROW(Realsense<SimpleMockContext>::validate(bad_config),
+               std::invalid_argument);
+}
+
+TEST_F(RealsenseTest, ValidateRejectsAlignColorDepthWithoutBothSensors) {
+  auto attributes = ProtoStruct{};
+  ProtoList sensors = {"color"};
+  attributes["sensors"] = sensors;
+  attributes["align_color_depth"] = true;
+
+  ResourceConfig bad_config(
+      "rdk:component:camera", "", test_name_, attributes, "",
+      Model("viam", "camera", "realsense"), LinkConfig{}, log_level::info);
+
+  EXPECT_THROW(Realsense<SimpleMockContext>::validate(bad_config),
+               std::invalid_argument);
+}
+
+TEST_F(RealsenseTest, ValidateAcceptsAlignColorDepthWithDefaultSensors) {
+  // No `sensors` attribute means both color and depth are enabled by default,
+  // which is fine for align_color_depth.
+  auto attributes = ProtoStruct{};
+  attributes["align_color_depth"] = true;
+
+  ResourceConfig valid_config(
+      "rdk:component:camera", "", test_name_, attributes, "",
+      Model("viam", "camera", "realsense"), LinkConfig{}, log_level::info);
+
+  EXPECT_NO_THROW(Realsense<SimpleMockContext>::validate(valid_config));
+}
+
 TEST_F(RealsenseTest, DoCommandReturnsEmptyStruct) {
   Realsense<boost::synchronized_value<SimpleMockContext>> camera(
       test_deps_, *test_config_, mock_realsense_context_,
@@ -481,6 +535,15 @@ TEST(RsResourceConfigTest, ConstructorSetsCorrectValues) {
   EXPECT_EQ(config.sensors, sensors);
   EXPECT_EQ(config.width, width);
   EXPECT_EQ(config.height, height);
+  EXPECT_FALSE(config.align_color_depth);
+}
+
+TEST(RsResourceConfigTest, ConstructorRespectsAlignColorDepth) {
+  std::vector<sensors::SensorType> sensors = {sensors::SensorType::color,
+                                              sensors::SensorType::depth};
+  RsResourceConfig config("serial", "name", sensors, std::nullopt, std::nullopt,
+                          /*align_color_depth=*/true);
+  EXPECT_TRUE(config.align_color_depth);
 }
 
 TEST(RealsenseTemplateTest, CanInstantiateWithRealContext) {
