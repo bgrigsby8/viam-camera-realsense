@@ -387,9 +387,9 @@ TEST_F(RealsenseTest, ValidateRejectsAlignColorDepthNonBool) {
   attributes["sensors"] = sensors;
   attributes["align_color_depth"] = std::string("yes");
 
-  ResourceConfig bad_config(
-      "rdk:component:camera", "", test_name_, attributes, "",
-      Model("viam", "camera", "realsense"), LinkConfig{}, log_level::info);
+  ResourceConfig bad_config("rdk:component:camera", "", test_name_, attributes,
+                            "", Model("viam", "camera", "realsense"),
+                            LinkConfig{}, log_level::info);
 
   EXPECT_THROW(Realsense<SimpleMockContext>::validate(bad_config),
                std::invalid_argument);
@@ -401,9 +401,9 @@ TEST_F(RealsenseTest, ValidateRejectsAlignColorDepthWithoutBothSensors) {
   attributes["sensors"] = sensors;
   attributes["align_color_depth"] = true;
 
-  ResourceConfig bad_config(
-      "rdk:component:camera", "", test_name_, attributes, "",
-      Model("viam", "camera", "realsense"), LinkConfig{}, log_level::info);
+  ResourceConfig bad_config("rdk:component:camera", "", test_name_, attributes,
+                            "", Model("viam", "camera", "realsense"),
+                            LinkConfig{}, log_level::info);
 
   EXPECT_THROW(Realsense<SimpleMockContext>::validate(bad_config),
                std::invalid_argument);
