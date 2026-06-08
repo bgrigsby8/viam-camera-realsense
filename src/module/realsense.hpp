@@ -781,9 +781,26 @@ public:
   get_geometries(const viam::sdk::ProtoStruct &extra) override {
     // Geometries are model-specific. The pose is the offset from the camera
     // reference origin (depth left imager) to the center of the bounding box,
-    // and the box dimensions match the physical module size in mm. See
-    // https://github.com/viam-modules/viam-camera-realsense/pull/75 for the
-    // derivation of the D435/D435i values.
+    // and the box dimensions {x, y, z} match the physical module size in mm.
+    // The camera optical frame is +X right, +Y down, +Z forward (out of the
+    // lens), so x = width, y = height, z = depth.
+    //
+    // Values are derived from the Intel RealSense D400-Series Datasheet
+    // (337029-005):
+    //   - Module dimensions: Table 3-43 (D415), Table 3-44 (D435/D435i).
+    //   - X offset (centerline of 1/4-20 mount to left imager): Table 4-15
+    //     (17.5 mm for D435/D435i, 20 mm for D415). The mount is on the module
+    //     centerline (the box center), so the left imager is this distance off
+    //     center. It is on the -X side: the right imager is one stereo baseline
+    //     (50 mm) further along +X, which would fall off the module edge if the
+    //     left imager were on the +X side. The offset from the origin (left
+    //     imager) to the box center is therefore +X (positive).
+    //   - Z offset: the depth origin (depth start point) sits behind the front
+    //     cover glass per Table 4-13 (4.2 mm for D435/D435i, 1.1 mm for D415).
+    //     The glass is the front face of the box, so the box center is
+    //     depth/2 behind the glass, i.e. (depth/2 - recession) behind the
+    //     origin. The left imager is on the housing's horizontal centerline
+    //     (Figure 4-6), so y = 0.
     // NOTE: when adding support for additional RealSense camera models,
     // update this switch accordingly.
     std::optional<std::string> model;
@@ -794,14 +811,13 @@ public:
       }
     }
     if (model && (*model == "D415")) {
-      // D415 module dimensions per Intel datasheet: 99 x 20 x 23 mm.
-      // The depth left imager sits near the left edge of the front face,
-      // mirroring the D435 layout offset by the difference in module size.
-      return {viam::sdk::GeometryConfig(viam::sdk::pose{-22, 0, -11.5},
-                                        viam::sdk::box({99, 20, 23}), "box")};
+      // D415: 99 (w) x 23 (h) x 20 (d) mm. Z = 20/2 - 1.1 = 8.9 mm.
+      return {viam::sdk::GeometryConfig(viam::sdk::pose{20, 0, -8.9},
+                                        viam::sdk::box({99, 23, 20}), "box")};
     }
     // Default: D435 / D435i geometry.
-    return {viam::sdk::GeometryConfig(viam::sdk::pose{-17.5, 0, -12.5},
+    // D435: 90 (w) x 25 (h) x 25 (d) mm. Z = 25/2 - 4.2 = 8.3 mm.
+    return {viam::sdk::GeometryConfig(viam::sdk::pose{17.5, 0, -8.3},
                                       viam::sdk::box({90, 25, 25}), "box")};
   }
 
