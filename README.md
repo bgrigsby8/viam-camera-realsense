@@ -85,7 +85,9 @@ The following methods of the Viam camera API are supported:
 
 #### Frame origin and `extrinsic_parameters`
 
-The RealSense D4xx series has multiple imagers at slightly different positions on the device. The **camera frame origin is anchored at the depth left imager** — the same convention used by the bounding-box geometries returned by `get_geometries`.
+The RealSense D4xx series has multiple imagers at slightly different positions on the device. The **camera frame origin is anchored at the depth left imager** for `extrinsic_parameters`.
+
+> **Note:** the bounding-box geometries returned by `get_geometries` are anchored at the **color (RGB) sensor**, not the depth left imager, since `get_properties` reports color intrinsics and the poses callers derive from the images are in the color frame. This differs from the `extrinsic_parameters` reference frame described below, and from the `GetPointCloud` output (which is in the depth frame). If you compose geometries and point clouds in the same frame, account for the ~14.7 mm (D435/D435i) color→depth baseline.
 
 `get_properties` returns color intrinsics whenever `color` is configured (depth intrinsics otherwise), regardless of `sensors` list order. `extrinsic_parameters` is always the transform from the intrinsics sensor's frame to the depth left imager (the camera reference frame). With the default `["color", "depth"]` config this is the color→depth transform; when only depth is configured — or only one sensor is configured — extrinsics are identity (zero translation).
 
