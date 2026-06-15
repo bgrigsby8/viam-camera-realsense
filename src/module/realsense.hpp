@@ -780,10 +780,33 @@ public:
   std::vector<viam::sdk::GeometryConfig>
   get_geometries(const viam::sdk::ProtoStruct &extra) override {
     // Geometries are model-specific. The pose is the offset from the camera
-    // reference origin (depth left imager) to the center of the bounding box,
-    // and the box dimensions match the physical module size in mm. See
-    // https://github.com/viam-modules/viam-camera-realsense/pull/75 for the
-    // derivation of the D435/D435i values.
+    // reference origin (the RGB/color sensor) to the center of the bounding
+    // box, and the box dimensions {x, y, z} match the physical module size in
+    // mm. The camera optical frame is +X right, +Y down, +Z forward (out of
+    // the lens), so x = width, y = height, z = depth.
+    //
+    // The origin is the color sensor because get_properties reports color
+    // intrinsics and the images/derived poses callers work with are in the
+    // color frame. Box dimensions and the depth-imager placement come from the
+    // Intel RealSense D400-Series Datasheet (337029-005); the color sensor's
+    // position is then derived from the color->depth extrinsics.
+    //   - Module dimensions: Table 3-43 (D415), Table 3-44 (D435/D435i).
+    //   - The depth left imager is offset from the module centerline (the box
+    //     center) per Table 4-15 (17.5 mm for D435/D435i, 20 mm for D415), on
+    //     the -X side: the right imager is one stereo baseline (50 mm D435,
+    //     55 mm D415) further along +X, which would fall off the module edge
+    //     if the left imager were on the +X side.
+    //   - The color sensor sits a further ~14.7 mm along -X from the depth left
+    //     imager for D435/D435i (color->depth extrinsics ~= {-14.7, 0, 0} mm),
+    //     so it is ~32.2 mm in -X from the box center, with no Y/Z component.
+    //     The offset from the origin (color sensor) to the box center is
+    //     therefore +X (positive): +32.2 mm for D435/D435i.
+    //   - Z offset: the color sensor shares the depth origin's Z plane, which
+    //     sits behind the front cover glass per Table 4-13 (4.2 mm for
+    //     D435/D435i, 1.1 mm for D415). The glass is the front face of the box,
+    //     so the box center is (depth/2 - recession) behind the origin. The
+    //     imagers are on the housing's horizontal centerline (Figure 4-6), and
+    //     the color->depth extrinsics have no Y component, so y = 0.
     // NOTE: when adding support for additional RealSense camera models,
     // update this switch accordingly.
     std::optional<std::string> model;
@@ -794,14 +817,15 @@ public:
       }
     }
     if (model && (*model == "D415")) {
-      // D415 module dimensions per Intel datasheet: 99 x 20 x 23 mm.
-      // The depth left imager sits near the left edge of the front face,
-      // mirroring the D435 layout offset by the difference in module size.
-      return {viam::sdk::GeometryConfig(viam::sdk::pose{-22, 0, -11.5},
-                                        viam::sdk::box({99, 20, 23}), "box")};
+      // D415: 99 (w) x 23 (h) x 20 (d) mm. Z = 20/2 - 1.1 = 8.9 mm.
+      // X = 20 (centerline->left imager) + color->depth baseline.
+      return {viam::sdk::GeometryConfig(viam::sdk::pose{35, 0, -8.9},
+                                        viam::sdk::box({99, 23, 20}), "box")};
     }
     // Default: D435 / D435i geometry.
-    return {viam::sdk::GeometryConfig(viam::sdk::pose{-17.5, 0, -12.5},
+    // D435: 90 (w) x 25 (h) x 25 (d) mm. Z = 25/2 - 4.2 = 8.3 mm.
+    // X = 17.5 (centerline->left imager) + 14.7 (color->depth baseline) = 32.2.
+    return {viam::sdk::GeometryConfig(viam::sdk::pose{32.2, 0, -8.3},
                                       viam::sdk::box({90, 25, 25}), "box")};
   }
 
