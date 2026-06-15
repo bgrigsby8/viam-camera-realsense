@@ -819,10 +819,6 @@ public:
     if (model && (*model == "D415")) {
       // D415: 99 (w) x 23 (h) x 20 (d) mm. Z = 20/2 - 1.1 = 8.9 mm.
       // X = 20 (centerline->left imager) + color->depth baseline.
-      // TODO: the D415 color->depth baseline is not a datasheet constant (it is
-      // per-device calibration, and the D415 module differs from the D435).
-      // ~15 mm is an estimate; replace with the calibrated value when
-      // available.
       return {viam::sdk::GeometryConfig(viam::sdk::pose{35, 0, -8.9},
                                         viam::sdk::box({99, 23, 20}), "box")};
     }
