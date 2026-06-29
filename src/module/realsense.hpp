@@ -675,38 +675,25 @@ public:
         // Calculate extrinsics from stream to reference stream
         p.extrinsic_parameters =
             realsense::extrinsics::get_extrinsics(stream, ref_stream);
-        /*
-       Disabling distortion parameters for now, when this is reenabled, we need
-       to make sure that get_properties works well through the SDK. A way to do
-       this is to create a python script and query camera.get_properties and
-       make sure it doesn't throw an error. This is related to this ticker:
-       https://viam.atlassian.net/browse/RSDK-12408
 
-       Which errors when creatng a new distorter here:
-       https://github.com/viamrobotics/rdk/blob/062f15b372240c332fa309760da8f607c5af6c9a/components/camera/client.go#L315
+        p.distortion_parameters.model = rs2_distortion_to_string(props.model);
+        // RealSense reports coeffs in OpenCV order [k1, k2, p1, p2, k3], but
+        // rdk's (Inverse)BrownConrady distorter expects [k1, k2, k3, p1, p2]
+        // (all radial terms, then tangential). Reorder to match rdk's contract.
+        p.distortion_parameters.parameters = {
+            props.coeffs[0], // RadialK1     (k1)
+            props.coeffs[1], // RadialK2     (k2)
+            props.coeffs[4], // RadialK3     (k3)
+            props.coeffs[2], // TangentialP1 (p1)
+            props.coeffs[3], // TangentialP2 (p2)
+        };
 
-       There is another fundamental aspect to this, the distorer presumably
-       distorts images using the distortion models supperted here:
-       https://github.com/viamrobotics/rdk/blob/e97069d07515d7e5961ba5ac2ef660619a2d6dda/rimage/transform/distorter.go#L10
-       Tghe consists of BrownConradyDistortionType and
-       KannalaBrandtDistortionType. But realsense reports a InverseBrownConrady
-       as its distortion model, which aparently does the inverse operation, take
-       a distorted image and undistort it. We need to figure out how to handle
-       this.
-
-        */
-        // p.distortion_parameters.model =
-        // rs2_distortion_to_string(props.model); for (auto const &coeff :
-        // props.coeffs)
-        //   p.distortion_parameters.parameters.push_back(coeff);
-
-        // std::stringstream coeffs_stream;
-        // for (size_t i = 0; i < p.distortion_parameters.parameters.size();
-        // ++i) {
-        //   if (i > 0)
-        //     coeffs_stream << ", ";
-        //   coeffs_stream << p.distortion_parameters.parameters[i];
-        // }
+        std::stringstream coeffs_stream;
+        for (size_t i = 0; i < p.distortion_parameters.parameters.size(); ++i) {
+          if (i > 0)
+            coeffs_stream << ", ";
+          coeffs_stream << p.distortion_parameters.parameters[i];
+        }
 
         VIAM_RESOURCE_LOG(debug)
             << "[get_properties] properties: ["
@@ -715,9 +702,9 @@ public:
             << "focal_x: " << p.intrinsic_parameters.focal_x_px << ", "
             << "focal_y: " << p.intrinsic_parameters.focal_y_px << ", "
             << "center_x: " << p.intrinsic_parameters.center_x_px << ", "
-            << "center_y: " << p.intrinsic_parameters.center_y_px << "]";
-        // << "distortion_model: " << p.distortion_parameters.model << ", "
-        // << "distortion_coeffs: [" << coeffs_stream.str() << "]" << "]";
+            << "center_y: " << p.intrinsic_parameters.center_y_px << ", "
+            << "distortion_model: " << p.distortion_parameters.model << ", "
+            << "distortion_coeffs: [" << coeffs_stream.str() << "]" << "]";
       };
       viam::sdk::Camera::properties response{};
       { // Begin scope for my_dev lock
